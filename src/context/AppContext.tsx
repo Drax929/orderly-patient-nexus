@@ -97,7 +97,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setDoctor(mergedDoctor);
     
     try {
-      const dbDoctor = mapDoctorToDbDoctor(mergedDoctor);
+      // Fixed: Using the correct function name from types
+      const dbDoctor = mapPatientToDbPatient(mergedDoctor);
       const { error } = await supabase
         .from('doctors')
         .update(dbDoctor)
@@ -209,8 +210,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         throw new Error('Failed to call next patient');
       }
       
-      // Update local state
-      const updatedPatient = {
+      // Update local state with proper type annotation
+      const updatedPatient: Patient = {
         ...nextPatient,
         status: 'in-progress',
         appointmentTime: now
@@ -253,7 +254,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       
       // Update local state
       setPatients(prev => prev.map(p => 
-        p.id === currentPatient.id ? { ...p, status: 'completed' } : p
+        p.id === currentPatient.id ? { ...p, status: 'completed' as const } : p
       ));
       
       setCurrentPatient(null);
