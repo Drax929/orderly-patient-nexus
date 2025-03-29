@@ -1,7 +1,8 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { toast } from '@/components/ui/use-toast';
-import { Patient, Doctor } from '@/types';
+import { Patient, Doctor, mapDbPatientToPatient, mapDbDoctorToDoctor, mapPatientToDbPatient } from '@/types';
+import { supabase } from '@/integrations/supabase/client';
 
 interface AppContextType {
   // Doctor info
@@ -43,106 +44,214 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [doctor, setDoctor] = useState<Doctor>(defaultDoctor);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [currentPatient, setCurrentPatient] = useState<Patient | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   
-  // Load patients from localStorage on component mount
+  // Load doctor and patients from Supabase on component mount
   useEffect(() => {
-    const savedPatients = localStorage.getItem('patients');
-    if (savedPatients) {
+    const fetchData = async () => {
+      setIsLoading(true);
+      
       try {
-        const parsedPatients = JSON.parse(savedPatients);
-        // Convert string dates back to Date objects
-        const patientsWithDates = parsedPatients.map((p: any) => ({
-          ...p,
-          createdAt: new Date(p.createdAt),
-          appointmentTime: p.appointmentTime ? new Date(p.appointmentTime) : undefined,
-        }));
-        setPatients(patientsWithDates);
+        // Fetch doctor
+        const { data: doctorData, error: doctorError } = await supabase
+          .from('doctors')
+          .select('*')
+          .limit(1);
+        
+        if (doctorError) {
+          console.error('Error fetching doctor:', doctorError);
+        } else if (doctorData && doctorData.length > 0) {
+          setDoctor(mapDbDoctorToDoctor(doctorData[0]));
+        }
+        
+        // Fetch patients
+        const { data: patientData, error: patientError } = await supabase
+          .from('patients')
+          .select('*')
+          .order('created_at', { ascending: false });
+        
+        if (patientError) {
+          console.error('Error fetching patients:', patientError);
+        } else if (patientData) {
+          const mappedPatients = patientData.map(mapDbPatientToPatient);
+          setPatients(mappedPatients);
+          
+          // Check for current in-progress patient
+          const inProgressPatient = mappedPatients.find(p => p.status === 'in-progress');
+          if (inProgressPatient) {
+            setCurrentPatient(inProgressPatient);
+          }
+        }
       } catch (error) {
-        console.error('Error parsing patients from localStorage:', error);
+        console.error('Error fetching data:', error);
+      } finally {
+        setIsLoading(false);
       }
-    }
-    
-    const savedDoctor = localStorage.getItem('doctor');
-    if (savedDoctor) {
-      try {
-        setDoctor(JSON.parse(savedDoctor));
-      } catch (error) {
-        console.error('Error parsing doctor from localStorage:', error);
-      }
-    }
-  }, []);
-  
-  // Save patients to localStorage whenever it changes
-  useEffect(() => {
-    localStorage.setItem('patients', JSON.stringify(patients));
-  }, [patients]);
-  
-  // Save doctor to localStorage whenever it changes
-  useEffect(() => {
-    localStorage.setItem('doctor', JSON.stringify(doctor));
-  }, [doctor]);
-  
-  const updateDoctor = (updatedDoctor: Partial<Doctor>) => {
-    setDoctor(prev => ({ ...prev, ...updatedDoctor }));
-  };
-  
-  const registerPatient = (name: string, mobile: string) => {
-    const today = new Date();
-    const todayPatients = patients.filter(p => {
-      const patientDate = new Date(p.createdAt);
-      return patientDate.toDateString() === today.toDateString();
-    });
-    
-    const serialNumber = todayPatients.length + 1;
-    
-    const newPatient: Patient = {
-      id: `${Date.now()}`,
-      name,
-      mobile,
-      serialNumber,
-      status: 'waiting',
-      createdAt: new Date(),
     };
     
-    setPatients(prev => [...prev, newPatient]);
+    fetchData();
+  }, []);
+  
+  const updateDoctor = async (updatedDoctor: Partial<Doctor>) => {
+    const mergedDoctor = { ...doctor, ...updatedDoctor };
+    setDoctor(mergedDoctor);
     
-    toast({
-      title: "Registration Successful",
-      description: `Your serial number is ${serialNumber}`,
-    });
-    
-    return newPatient;
+    try {
+      const dbDoctor = mapDoctorToDbDoctor(mergedDoctor);
+      const { error } = await supabase
+        .from('doctors')
+        .update(dbDoctor)
+        .eq('id', doctor.id);
+      
+      if (error) {
+        console.error('Error updating doctor:', error);
+        toast({
+          title: "Update Failed",
+          description: "Failed to update doctor information.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error('Error updating doctor:', error);
+    }
   };
   
-  const callNextPatient = () => {
-    const waitingPatients = patients
-      .filter(p => p.status === 'waiting' && new Date(p.createdAt).toDateString() === new Date().toDateString())
-      .sort((a, b) => a.serialNumber - b.serialNumber);
-    
-    if (waitingPatients.length > 0) {
-      const nextPatient = waitingPatients[0];
+  const registerPatient = async (name: string, mobile: string) => {
+    try {
+      const today = new Date();
       
-      // Update this patient's status
+      // Get the current max serial number for today
+      const { data, error: countError } = await supabase
+        .from('patients')
+        .select('serial_number')
+        .gte('created_at', today.toISOString().split('T')[0])
+        .lt('created_at', new Date(today.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0])
+        .order('serial_number', { ascending: false })
+        .limit(1);
+      
+      if (countError) {
+        console.error('Error counting patients:', countError);
+        throw new Error('Failed to register patient');
+      }
+      
+      const serialNumber = data && data.length > 0 ? data[0].serial_number + 1 : 1;
+      
+      const newPatient: Patient = {
+        id: `${Date.now()}`,
+        name,
+        mobile,
+        serialNumber,
+        status: 'waiting',
+        createdAt: today,
+      };
+      
+      const dbPatient = mapPatientToDbPatient(newPatient);
+      
+      const { data: insertedData, error: insertError } = await supabase
+        .from('patients')
+        .insert(dbPatient)
+        .select()
+        .single();
+      
+      if (insertError) {
+        console.error('Error registering patient:', insertError);
+        throw new Error('Failed to register patient');
+      }
+      
+      const insertedPatient = mapDbPatientToPatient(insertedData);
+      setPatients(prev => [insertedPatient, ...prev]);
+      
+      toast({
+        title: "Registration Successful",
+        description: `Your serial number is ${serialNumber}`,
+      });
+      
+      return insertedPatient;
+    } catch (error) {
+      console.error('Error registering patient:', error);
+      toast({
+        title: "Registration Failed",
+        description: "Failed to register patient. Please try again.",
+        variant: "destructive",
+      });
+      throw error;
+    }
+  };
+  
+  const callNextPatient = async () => {
+    try {
+      const waitingPatients = patients
+        .filter(p => p.status === 'waiting' && new Date(p.createdAt).toDateString() === new Date().toDateString())
+        .sort((a, b) => a.serialNumber - b.serialNumber);
+      
+      if (waitingPatients.length === 0) {
+        toast({
+          title: "No Waiting Patients",
+          description: "The waiting list is currently empty.",
+        });
+        return;
+      }
+      
+      const nextPatient = waitingPatients[0];
+      const now = new Date();
+      
+      // Update in Supabase
+      const { error } = await supabase
+        .from('patients')
+        .update({
+          status: 'in-progress',
+          appointment_time: now.toISOString()
+        })
+        .eq('id', nextPatient.id);
+      
+      if (error) {
+        console.error('Error calling next patient:', error);
+        throw new Error('Failed to call next patient');
+      }
+      
+      // Update local state
+      const updatedPatient = {
+        ...nextPatient,
+        status: 'in-progress',
+        appointmentTime: now
+      };
+      
       setPatients(prev => prev.map(p => 
-        p.id === nextPatient.id ? { ...p, status: 'in-progress', appointmentTime: new Date() } : p
+        p.id === nextPatient.id ? updatedPatient : p
       ));
       
-      setCurrentPatient({ ...nextPatient, status: 'in-progress', appointmentTime: new Date() });
+      setCurrentPatient(updatedPatient);
       
       toast({
         title: "Patient Called",
         description: `Now serving ${nextPatient.name} (Serial #${nextPatient.serialNumber})`,
       });
-    } else {
+    } catch (error) {
+      console.error('Error calling next patient:', error);
       toast({
-        title: "No Waiting Patients",
-        description: "The waiting list is currently empty.",
+        title: "Error",
+        description: "Failed to call next patient. Please try again.",
+        variant: "destructive",
       });
     }
   };
   
-  const completeCurrentAppointment = () => {
-    if (currentPatient) {
+  const completeCurrentAppointment = async () => {
+    if (!currentPatient) return;
+    
+    try {
+      // Update in Supabase
+      const { error } = await supabase
+        .from('patients')
+        .update({ status: 'completed' })
+        .eq('id', currentPatient.id);
+      
+      if (error) {
+        console.error('Error completing appointment:', error);
+        throw new Error('Failed to complete appointment');
+      }
+      
+      // Update local state
       setPatients(prev => prev.map(p => 
         p.id === currentPatient.id ? { ...p, status: 'completed' } : p
       ));
@@ -153,23 +262,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         title: "Appointment Completed",
         description: "Ready for the next patient.",
       });
+    } catch (error) {
+      console.error('Error completing appointment:', error);
+      toast({
+        title: "Error",
+        description: "Failed to complete appointment. Please try again.",
+        variant: "destructive",
+      });
     }
   };
   
-  // Mock OTP functions
+  // Mock OTP functions (these don't need Supabase changes)
   const sendOTP = async (mobile: string): Promise<boolean> => {
-    // In a real app, you would call an API to send OTP
     console.log(`Sending OTP to ${mobile}`);
-    // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 1000));
     return true;
   };
   
   const verifyOTP = (otp: string): boolean => {
-    // In a real app, you would verify this against a stored OTP or call an API
-    // For demo purposes, any 4-digit OTP is valid
     return otp.length === 4 && !isNaN(Number(otp));
   };
+  
+  if (isLoading) {
+    return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  }
   
   return (
     <AppContext.Provider
