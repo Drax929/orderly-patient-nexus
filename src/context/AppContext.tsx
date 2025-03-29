@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { toast } from '@/components/ui/use-toast';
-import { Patient, Doctor, mapDbPatientToPatient, mapDbDoctorToDoctor, mapPatientToDbPatient } from '@/types';
+import { Patient, Doctor, mapDbPatientToPatient, mapDbDoctorToDoctor, mapPatientToDbPatient, mapDoctorToDbDoctor } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
 
 interface AppContextType {
@@ -97,8 +97,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setDoctor(mergedDoctor);
     
     try {
-      // Fixed: Using the correct function name from types
-      const dbDoctor = mapPatientToDbPatient(mergedDoctor);
+      // Fixed: Using the correct function to map doctor data
+      const dbDoctor = mapDoctorToDbDoctor(mergedDoctor);
       const { error } = await supabase
         .from('doctors')
         .update(dbDoctor)
@@ -137,8 +137,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       
       const serialNumber = data && data.length > 0 ? data[0].serial_number + 1 : 1;
       
-      const newPatient: Patient = {
-        id: `${Date.now()}`,
+      // Create new patient object - but do NOT set the ID manually, let Supabase generate it
+      const newPatient: Omit<Patient, 'id'> = {
         name,
         mobile,
         serialNumber,
@@ -146,8 +146,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         createdAt: today,
       };
       
+      // Convert to DB format
       const dbPatient = mapPatientToDbPatient(newPatient);
       
+      // Insert the patient without providing an ID
       const { data: insertedData, error: insertError } = await supabase
         .from('patients')
         .insert(dbPatient)

@@ -1,3 +1,4 @@
+
 export interface Patient {
   id: string;
   name: string;
@@ -41,6 +42,7 @@ export const mapDbPatientToPatient = (dbPatient: any): Patient => {
 export const mapPatientToDbPatient = (patient: Partial<Patient>): any => {
   const dbPatient: any = {};
   
+  // Only include id if it's provided (for updates, not for new patients)
   if (patient.id !== undefined) dbPatient.id = patient.id;
   if (patient.name !== undefined) dbPatient.name = patient.name;
   if (patient.mobile !== undefined) dbPatient.mobile = patient.mobile;
