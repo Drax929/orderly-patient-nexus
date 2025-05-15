@@ -1,6 +1,5 @@
-
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { toast } from '@/components/ui/use-toast';
+import { toast } from '@/hooks/use-toast';
 import { Patient, Doctor, mapDbPatientToPatient, mapDbDoctorToDoctor, mapPatientToDbPatient, mapDoctorToDbDoctor } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
 
