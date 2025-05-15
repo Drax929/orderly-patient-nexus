@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { toast } from '@/hooks/use-toast';
+import { toast } from '@/components/ui/use-toast';
 import { Patient, Doctor, mapDbPatientToPatient, mapDbDoctorToDoctor, mapPatientToDbPatient, mapDoctorToDbDoctor } from '@/types';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -59,6 +59,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         
         if (doctorError) {
           console.error('Error fetching doctor:', doctorError);
+          // Continue with default doctor if there's an error
         } else if (doctorData && doctorData.length > 0) {
           setDoctor(mapDbDoctorToDoctor(doctorData[0]));
         }
@@ -98,10 +99,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       // Fixed: Using the correct function to map doctor data
       const dbDoctor = mapDoctorToDbDoctor(mergedDoctor);
+      
       const { error } = await supabase
         .from('doctors')
-        .update(dbDoctor)
-        .eq('id', doctor.id);
+        .update({
+          name: dbDoctor.name,
+          clinic: dbDoctor.clinic,
+          morning_start: dbDoctor.morning_start,
+          morning_end: dbDoctor.morning_end,
+          evening_start: dbDoctor.evening_start,
+          evening_end: dbDoctor.evening_end,
+          average_consultation_time: dbDoctor.average_consultation_time
+        })
+        .eq('id', dbDoctor.id);
       
       if (error) {
         console.error('Error updating doctor:', error);
@@ -110,9 +120,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           description: "Failed to update doctor information.",
           variant: "destructive",
         });
+      } else {
+        toast({
+          title: "Update Successful",
+          description: "Doctor information updated successfully.",
+        });
       }
     } catch (error) {
       console.error('Error updating doctor:', error);
+      toast({
+        title: "Update Failed",
+        description: "Failed to update doctor information.",
+        variant: "destructive",
+      });
     }
   };
   
@@ -131,12 +151,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       
       if (countError) {
         console.error('Error counting patients:', countError);
-        throw new Error('Failed to register patient');
+        toast({
+          title: "Registration Failed",
+          description: "Failed to register patient. Please try again.",
+          variant: "destructive",
+        });
+        return;
       }
       
       const serialNumber = data && data.length > 0 ? data[0].serial_number + 1 : 1;
       
-      // Create new patient object - but do NOT set the ID manually, let Supabase generate it
+      // Create new patient object
       const newPatient: Omit<Patient, 'id'> = {
         name,
         mobile,
@@ -148,16 +173,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // Convert to DB format
       const dbPatient = mapPatientToDbPatient(newPatient);
       
-      // Insert the patient without providing an ID
+      // Insert the patient
       const { data: insertedData, error: insertError } = await supabase
         .from('patients')
-        .insert(dbPatient)
+        .insert({
+          name: dbPatient.name,
+          mobile: dbPatient.mobile,
+          serial_number: dbPatient.serial_number,
+          status: dbPatient.status,
+          created_at: dbPatient.created_at,
+          appointment_time: dbPatient.appointment_time
+        })
         .select()
         .single();
       
       if (insertError) {
         console.error('Error registering patient:', insertError);
-        throw new Error('Failed to register patient');
+        toast({
+          title: "Registration Failed",
+          description: "Failed to register patient. Please try again.",
+          variant: "destructive",
+        });
+        return;
       }
       
       const insertedPatient = mapDbPatientToPatient(insertedData);
@@ -176,7 +213,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         description: "Failed to register patient. Please try again.",
         variant: "destructive",
       });
-      throw error;
     }
   };
   
